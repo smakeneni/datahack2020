@@ -1,0 +1,335 @@
+---
+title: "Yearly Trends"
+author: "kjn"
+date: "2/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(leaflet)
+library(plotly)
+library(knitr)
+library(kableExtra)
+library(lubridate)
+```
+
+```{r data}
+dph_dash_ems_naloxone_zip <- read.csv("./data/dph_dash_ems_naloxone_zip.csv")
+dph_dash_n_naloxone_admins <- read.csv("./data/dph_dash_n_naloxone_admins.csv")
+dph_od_incident_counts <- read.csv("./data/dph_od_incident_counts.csv", stringsAsFactors = FALSE)
+dph_od_resident_counts <- read.csv("./data/dph_od_resident_counts.csv")
+pp_refill_events <- read.csv("./data/pp_refill_events.csv")
+pp_refill_zipcode_metrics <- read.csv("./data/pp_refill_zipcode_metrics.csv")
+psp_overdose_events <- read.csv("./data/psp_overdose_events.csv")
+```
+
+### Naloxone data from DPH
+#### 1: dph_dash_ems_naloxone_zip.csv
+* two columns: zip code, count
+* unsure if zip code is incident location or location of person who acquired the naloxone
+* 2018 data?
+```{r dph_dash_ems_naloxone_zip}
+load("./data/philly_base_zip_map.RData")
+zip_dat@data$zip_code <- as.numeric(as.character(zip_dat@data$GEOID10))
+zip_dat@data <- left_join(zip_dat@data, dph_dash_ems_naloxone_zip, by =c("zip_code" = "Pickup.Zip.Code"))
+
+pal <- colorNumeric(
+  palette = "Blues",
+  domain=dph_dash_ems_naloxone_zip$Numebr.of.Records
+)
+
+leaflet() %>%
+  addProviderTiles(providers$Stamen.Toner) %>%
+  addPolygons(data=zip_dat, fillColor = ~pal(Numebr.of.Records), fillOpacity = 1,
+              color="black", label=~as.character(Numebr.of.Records))
+
+```
+
+#### 2: dph_dash_n_naloxone_admins
+* by year & quarter
+```{r dph_dash_n_naloxone_admins}
+source("./readTcsv.R")
+dph_dash_n_naloxone_admins <- read.tcsv("./data/dph_dash_n_naloxone_admins.csv")
+
+dph_dash_n_naloxone_admins$X <- gsub("X", "", dph_dash_n_naloxone_admins$X)
+dph_dash_n_naloxone_admins$total <- 
+  rowSums(dph_dash_n_naloxone_admins[,c("EMS", "Police", "SEPTA")], na.rm = T)
+
+m_naloxon_admins <- melt(dph_dash_n_naloxone_admins, id = "X")
+m_naloxon_admins$X <- factor(m_naloxon_admins$X)
+ggplot(m_naloxon_admins, aes(x=X, y=value, color=variable, group=variable)) +
+  geom_line(size=2, stat="identity") +
+  scale_x_discrete(breaks = levels(m_naloxon_admins$X)[c(T, rep(F, 3))]) +
+  ggtitle("dph_dash_n_naloxone_admins.csv")
+
+```
+
+### OD data from DPH
+#### 1 dph_od_incident_counts
+* by year & quarter
+* if count 0-5, then only specified as <6
+```{r dph_od_incident_counts}
+dph_od_incident_counts <- read.csv("./data/dph_od_incident_counts.csv", stringsAsFactors = FALSE)
+dph_od_incident_counts[dph_od_incident_counts=="<6"] <- "5"
+# remove OOJ and unknown rows
+dph_od_incident_counts <- dph_od_incident_counts[
+  -which(dph_od_incident_counts$ZIPCODE=="OOJ" | dph_od_incident_counts$ZIPCODE=="Unknown"),]
+dph_od_incident_counts <- data.frame(lapply(dph_od_incident_counts, function(x) as.numeric(x)))
+
+years = c(2014, 2015, 2016, 2017, 2018)
+data_year = NULL
+for (i in years) {
+  match_year <- which(grepl(i, colnames(dph_od_incident_counts)))
+  data_i <- dph_od_incident_counts[, match_year]
+  data_i <- data.frame(zip = dph_od_incident_counts$ZIPCODE,
+                       count = apply(data_i, 1, sum, na.rm=TRUE))
+  data_i$year <- i
+  data_year <- rbind.fill(data_year, data_i)
+}
+
+#get minimum and maximum data for each zip code
+data_year_range <- NULL
+for (i in unique(data_year$zip)) {
+  data_i <- data_year[data_year$zip == i,]
+  data_range <- data.frame(zip = i,
+                           min = min(data_i$count, na.rm = T),
+                           max = max(data_i$count, na.rm = T))
+  data_year_range <- rbind.fill(data_year_range, data_range)
+}
+
+keep_zip <- data_year_range$zip[data_year_range$max > 20]
+
+ind <- which(dph_od_incident_counts$ZIPCODE %in% keep_zip)
+sub_data <- dph_od_incident_counts[ind,]
+long_data = gather(sub_data, timepoint, value, X2014Q1:X2018Q4)
+long_data$ZIPCODE <- factor(long_data$ZIPCODE)
+long_data$timepoint <- factor(long_data$timepoint)
+p <- ggplot(long_data, aes(x=timepoint, y=value, color=ZIPCODE, group=ZIPCODE)) +
+  geom_line(size=1, stat="identity") +
+  scale_x_discrete(breaks = levels(long_data$timepoint)[c(T, rep(F, 3))]) +
+  ggtitle("dph_dash_n_naloxone_admins.csv zip with most incidents")
+ggplotly(p)
+
+p <- ggplot(long_data[-which(long_data$ZIPCODE == "19134"),], aes(x=timepoint, y=value, color=ZIPCODE, group=ZIPCODE)) +
+  geom_line(size=1, stat="identity") +
+  scale_x_discrete(breaks = levels(long_data[-which(long_data$ZIPCODE == "19134")]$timepoint)[c(T, rep(F, 3))]) +
+  ggtitle("dph_dash_n_naloxone_admins.csv 19134 removed")
+ggplotly(p)
+
+pdata <- data_year[which(data_year$zip %in% keep_zip),]
+pdata <- pdata[-which(pdata$zip == "19134"),]
+pdata$zip <- factor(pdata$zip)
+p <- ggplot(pdata, aes(x=year, y=count, color=zip, group=zip)) +
+  geom_line(size=1, stat="identity") +
+  ggtitle("dph_dash_n_naloxone_admins.csv 19134 removed")
+ggplotly(p)
+
+data_year_incident <- data_year
+```
+
+#### 2 dph_od_resident_counts
+* same setup as dph_od_incident counts (ZIPCODE now named Zip.Code)
+
+```{r dph_od_resident_counts}
+dph_od_resident_counts <- read.csv("./data/dph_od_resident_counts.csv", stringsAsFactors = FALSE)
+dph_od_resident_counts[dph_od_resident_counts=="<6"] <- "5"
+# remove OOJ and unknown rows
+dph_od_resident_counts <- dph_od_resident_counts[
+  -which(dph_od_resident_counts$Zip.Code=="OOJ" | dph_od_resident_counts$Zip.Code=="Unknown"),]
+dph_od_resident_counts <- data.frame(lapply(dph_od_resident_counts, function(x) as.numeric(x)))
+
+years = c(2014, 2015, 2016, 2017, 2018)
+data_year = NULL
+for (i in years) {
+  match_year <- which(grepl(i, colnames(dph_od_resident_counts)))
+  data_i <- dph_od_resident_counts[, match_year]
+  data_i <- data.frame(zip = dph_od_resident_counts$Zip.Code,
+                       count = apply(data_i, 1, sum, na.rm=TRUE))
+  data_i$year <- i
+  data_year <- rbind.fill(data_year, data_i)
+}
+
+#get minimum and maximum data for each zip code
+data_year_range <- NULL
+for (i in unique(data_year$zip)) {
+  data_i <- data_year[data_year$zip == i,]
+  data_range <- data.frame(zip = i,
+                           min = min(data_i$count, na.rm = T),
+                           max = max(data_i$count, na.rm = T))
+  data_year_range <- rbind.fill(data_year_range, data_range)
+}
+
+keep_zip <- data_year_range$zip[data_year_range$max > 20]
+
+ind <- which(dph_od_resident_counts$Zip.Code %in% keep_zip)
+sub_data <- dph_od_resident_counts[ind,]
+long_data = gather(sub_data, timepoint, value, X2014Q1:X2018Q4)
+long_data$Zip.Code <- factor(long_data$Zip.Code)
+long_data$timepoint <- factor(long_data$timepoint)
+p <- ggplot(long_data, aes(x=timepoint, y=value, color=Zip.Code, group=Zip.Code)) +
+  geom_line(size=1, stat="identity") +
+  scale_x_discrete(breaks = levels(long_data$timepoint)[c(T, rep(F, 3))]) +
+  ggtitle("dph_dash_n_naloxone_admins.csv zip with most incidents")
+ggplotly(p)
+
+p <- ggplot(long_data[-which(long_data$Zip.Code == "19134"),], aes(x=timepoint, y=value, color=Zip.Code, group=Zip.Code)) +
+  geom_line(size=1, stat="identity") +
+  scale_x_discrete(breaks = levels(long_data[-which(long_data$Zip.Code == "19134")]$timepoint)[c(T, rep(F, 3))]) +
+  ggtitle("dph_dash_n_naloxone_admins.csv 19134 removed")
+ggplotly(p)
+
+pdata <- data_year[which(data_year$zip %in% keep_zip),]
+pdata <- pdata[-which(pdata$zip == "19134"),]
+pdata$zip <- factor(pdata$zip)
+p <- ggplot(pdata, aes(x=year, y=count, color=zip, group=zip)) +
+  geom_line(size=1, stat="identity") +
+  ggtitle("dph_dash_n_naloxone_admins.csv 19134 removed")
+ggplotly(p)
+data_year_resident <- data_year
+```
+
+#### Compare the "incident" and "resident" files by year and zip
+
+```{r compare the incident and resident files}
+combined <- join(data_year_incident, data_year_resident, by=c("zip", "year"))
+names(combined) <- c("zip", "count_incident", "year", "count_resident")
+combined$zip <- factor(combined$zip)
+p <- ggplot(combined, aes(x=count_incident, y=count_resident, color=zip)) +
+  geom_point()
+ggplotly(p)
+```
+
+### Prevention point data
+#### pp_refill_events.csv
+* 30 variables
+  + demographics: age, gender, race
+  + use info: n_pp_refill, n_o_refill, n_ods, n_admins, n_revivals, used_naloxone, cpr_used
+  + outcome & transfer to: outcome, outcome_ems, outcome_police, outcome_ed, outcome_death, outcome_unk, outcome_ok
+  + drug: od_drug, od_drug_heroin, od_drug_cocain, od_drug_fentanyl, od_drug_unknown, od_drug_other
+  + physical status: od_present, od_present_breath, od_present_unresponsive, od_present_coloring, od_present_other
+  + data date range: 2018-q1-q2, 2018-q3-q4
+* Notes
+  + more than one drug may be present
+  + more than one outcome type may be present
+`r paste(dim(pp_refill_events)[1], "observations", sep=" ")`
+```{r pp_refill_events tables, result='asis'}
+kable(table(pp_refill_events$gender), row.names=FALSE, col.names=c("gender", "count")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+cat("\n")
+kable(table(pp_refill_events$race), row.names=FALSE, col.names=c("race", "count")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+cat("\n")
+kable(table(pp_refill_events$data_date_range), row.names=FALSE, col.names=c("date range", "count")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+cat("\n")
+```
+
+```{r pp_refill_events.csv plots}
+outcome_cols <- c("outcome_ems", "outcome_police", "outcome_ed", "outcome_death", "outcome_unk", "outcome_ok")
+drug_cols <- c("od_drug_heroin", "od_drug_cocaine", "od_drug_fentanyl", "od_drug_unknown", "od_drug_other")
+status_cols <- c("od_present_breath", "od_present_unresponsive", "od_present_coloring", "od_present_other")
+
+pdata <- pp_refill_events[, outcome_cols]
+mdata <- melt(pdata)
+mdata$value[mdata$value > 1] <- NA
+p <- ggplot(mdata, aes(x=variable, y=value, fill=variable)) +
+  geom_bar(stat = "identity") +
+  ggtitle("OD outcome")
+ggplotly(p)
+
+pdata <- pp_refill_events[, drug_cols]
+mdata <- melt(pdata)
+mdata$value[mdata$value > 1] <- NA
+p <- ggplot(mdata, aes(x=variable, y=value, fill=variable)) +
+  geom_bar(stat = "identity") +
+  ggtitle("OD drug")
+ggplotly(p)
+
+pdata <- pp_refill_events[, status_cols]
+mdata <- melt(pdata)
+mdata$value[mdata$value > 1] <- NA
+p <- ggplot(mdata, aes(x=variable, y=value, fill=variable)) +
+  geom_bar(stat = "identity") +
+  ggtitle("OD status")
+ggplotly(p)
+```
+
+#### pp_refill_zipcode_metrics
+* appears to be summary data of previous sheet, but with the addition of zip code (one line per zip)
+* shiny app for viewing already created
+
+### PSP data (State-wide data)
+#### psp_overdose_events.csv
+* Date (1/1/2018-1/15/2020), time, day of week
+* Incident info: county, state
+* Victim demographics: gender, age, race, ethnicity
+* Accidental exposure (Y/N)
+* Suspected drugs
+* Whether naloxone was administered and, if so, dose count, dose unit
+* Response time (to Naloxone??): <1 minute, , 1-3minutes, >5 minutes, did not work
+* Survived: Y/N/U
+* Response (to naloxone?) description: i.e. combative, no response to nalxone, responsive and alert
+* Revive action description: i.e. arrest, hospital conscious, hospital unconscious, refused transport
+* Third party admin description: EMS, Fire department
+
+removed 2020 data from dataset for analysis  
+removed accidental exposure == Y observations (17 records)  
+`r paste(dim(psp_overdose_events)[1], "incidents", sep=" ")`  
+`r paste(length(which(psp_overdose_events$Incident.County.Name == "Philadelphia")), "incidents in Philadelphia")`
+```{r psp_overdose_events data}
+psp_overdose_events$Incident.Date <- as.Date(psp_overdose_events$Incident.Date, "%m/%d/%Y")
+ind <- which(year(psp_overdose_events$Incident.Date) %in% c(2018, 2019))
+psp_overdose_events <- psp_overdose_events[ind,]
+psp_overdose_events <- psp_overdose_events[which(psp_overdose_events$Accidental.Exposure == "N"),]
+levels(psp_overdose_events) <- levels(psp_overdose_events)[]
+```
+
+```{r psp_overdose_events tables, results='asis'}
+kable(table(psp_overdose_events$Susp.OD.Drug.Desc), row.names=FALSE, col.names=c("Suspected Drugh", "count")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+cat("\n")
+```
+
+```{r psp_overdose_events plots}
+p <- ggplot(psp_overdose_events, aes(x="outcome", fill=Survive)) +
+  geom_bar(position = "fill")
+ggplotly(p)
+
+p <- ggplot(psp_overdose_events[!is.na(psp_overdose_events$Revive.Action.Desc),], 
+            aes(x="Revive Action (removed NA's)", fill=Revive.Action.Desc)) +
+  geom_bar(position = "fill")
+ggplotly(p)
+
+p <- ggplot(psp_overdose_events[!is.na(psp_overdose_events$Third.Party.Admin.Desc),],
+            aes(x="3rd Party Admin (removed NA's)", fill=Third.Party.Admin.Desc)) +
+  geom_bar(position = "fill")
+ggplotly(p)
+```
+
+```{r summary data, eval=FALSE}
+data <- read.csv("./data/kjn_dph_yearly_data.csv")
+data$total_naloxone <- rowSums(data[,c("naloxone_ems", "naloxone_police", "naloxone_septa")], na.rm = T)
+
+
+data$total_naloxone[data$total_naloxone == 0] <- NA
+```
+
+```{r od naloxone, eval=FALSE}
+keep_cols <- c("year", "fatal_od_all", "total_naloxone", "hospital_opioid_poisoning", "ed_visits_od", "pp_se_n")
+subData <- data[, keep_cols]
+subData[,-1] <- scale(subData[,-1])
+subData[,-1] <- lapply(subData[,-1], function(x) spline(subData$year,x, 10)$y)
+mdata <- melt(subData, id="year")
+ggplot(mdata, aes(x=year, y=value, color=variable)) +
+  geom_line(size=2)
+
+```
+
+

@@ -1,0 +1,71 @@
+---
+title: 'Data summary: pp_refill events'
+author: "kjn"
+date: "2/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(dev="png", dpi=72)
+library(ggplot2)
+library(knitr)
+library(dplyr)
+library(zipcode)
+library(leaflet)
+library(shiny)
+
+load("philly_base_zip_map.RData")
+zip_dat@data$GEOID10 <- droplevels(zip_dat@data$GEOID10)
+
+theme_replace(axis.title.x = element_text(color = "#000000", face = "bold", size = 15),
+              axis.title.y = element_text(color = "#000000", face = "bold", size = 15, angle=90),
+		          axis.text.x = element_text(color = "#000000", size = 15),
+		          axis.text.y = element_text(color = "#000000", size = 15),
+		          axis.line = element_line(color = "#000000", size = 1),
+		          legend.title = element_blank(),
+		          panel.grid.minor = element_blank(),
+		          panel.grid.major = element_blank(),
+              panel.background = element_blank())
+```
+
+```{r get data}
+source("system_setup_vars.R")
+# dbListTables(con)
+source("home/connect_to_db_rstudio.R")
+# pp_refill_zipcode_metrics <- as.data.frame(tbl(con, 'pp_refill_zipcode_metrics'))
+pp_refill_events <- as.data.frame(tbl(con, 'pp_refill_events'))
+
+pp_refill_events[, -which(colnames(pp_refill_events) == "age")] <- 
+  lapply(pp_refill_events[, -which(colnames(pp_refill_events) == "age")], function(x) factor(x))
+
+```
+
+## Prevention point data
+#### pp_refill_events 
+
+##### summary of missing data
+```{r pp_refill_zipcode_metrics missing, results='asis', eval=TRUE}
+data <- pp_refill_events
+for (i in colnames(data)) {
+  cat("-", i, ": ", length(which(is.na(data[,i]))), "\n")
+}
+```
+
+("age", "gender", "race", "n_pp_refill", "n_o_refill",              
+"n_ods", "n_admins", "n_revivals", "used_narcan_type", "ml_naloxone",           
+"cpr_used", "outcome", "outcome_ems", "outcome_police", "outcome_ed",             
+"outcome_death", "outcome_unk", "outcome_ok", "od_drug", "od_drug_heroin",        
+"od_drug_cocaine", "od_drug_fentanyl", "od_drug_unknown", "od_drug_other", "od_present",            
+"od_present_breath", "od_present_unresponsive", "od_present_coloring", "od_present_other", "data_date_range")    
+
+```{r data summary, results='asis'}
+sub_data = pp_refill_events
+for (i in colnames(sub_data)) {
+  cat("##### ", i)
+  # print(kable(t(summary(sub_data[,i])), digits=0))
+  print(table(sub_data[,i]))
+  cat("\n")
+}
+```
+

@@ -1,0 +1,140 @@
+---
+title: "Data summary: pp_sep Data collected through the Prevention Point Syringe Exchange Program (SEP)"
+author: "kjn"
+date: "2/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(dev="png", dpi=72)
+library(ggplot2)
+library(knitr)
+library(dplyr)
+library(leaflet)
+
+theme_replace(axis.title.x = element_text(color = "#000000", face = "bold", size = 15),
+              axis.title.y = element_text(color = "#000000", face = "bold", size = 15, angle=90),
+		          axis.text.x = element_text(color = "#000000", size = 15),
+		          axis.text.y = element_text(color = "#000000", size = 15),
+		          axis.line = element_line(color = "#000000", size = 1),
+		          legend.title = element_blank(),
+		          panel.grid.minor = element_blank(),
+		          panel.grid.major = element_blank(),
+              panel.background = element_blank())
+```
+
+```{r data, eval=FALSE}
+source("system_setup_vars.R") #set database user/pw
+# dbListTables(con)
+source("home/connect_to_db_rstudio.R")
+pp_sep_site_exchanges <- as.data.frame(tbl(con, 'pp_sep_site_exchanges'))
+pp_sep_site_participants <- as.data.frame(tbl(con, 'pp_sep_site_participants'))
+```
+
+```{r map data}
+geo_data <- read.csv("./codebooks/sep_site_outrigger_LATLON.csv")
+map_data <- na.omit(geo_data[, c("site_id", "site_name", "site_location", "Lat", "Lon")])
+leaflet(map_data) %>%
+  addProviderTiles(providers$Stamen.Toner) %>%
+  addCircles(lng=~Lon, lat=~Lat, label=~site_location)
+    
+
+```
+
+```{r all data, eval=FALSE}
+table_names <- dbListTables(con)
+for (df in table_names) {
+  assign(
+    x = df,
+    value = as.data.frame(tbl(con, df)),
+    envir = .GlobalEnv
+  )
+}
+```
+
+## Prevention point data
+#### pp_sep_site exchanges
+
+* There are `r length(which(pp_sep_site_exchanges$site_id==99))` sites described by the location "99"
+
+##### summary of missing data
+```{r sep_site_exchanges missing, results='asis'}
+data <- pp_sep_site_exchanges
+data$site_id <- factor(data$site_id)
+for (i in colnames(data)) {
+  cat("-", i, ": ", length(which(is.na(data[,i]))), "\n")
+}
+```
+##### data timeframe, month & year
+```{r sep_site_exchanges visit_month}
+kable(sort(unique(data$visit_month)), col.names="month and year")
+```
+
+```{r sep_site_exchanges numeric summaries, results='asis'}
+sub_data = dplyr::select_if(data, is.numeric)
+for (i in colnames(sub_data)) {
+  cat("##### ", i)
+  print(kable(t(summary(sub_data[,i])), digits=0))
+  cat("\n")
+}
+```
+
+```{r sep_site_exchanges plots}
+data$ratio = data$syringes_returned/data$syringes_dispensed*100
+data$ratio[data$ratio==Inf] <- NA
+
+ggplot(na.omit(data[!data$site_id==99,]), aes(x=site_id, y=visit_month, fill=syringes_dispensed)) +
+  geom_tile() +
+  ggtitle("Number of needles dispensed by site and month")
+ggplot(na.omit(data[!data$site_id==99,]), aes(x=site_id, y=visit_month, fill=ratio)) +
+  geom_tile() +
+  ggtitle("Rate of needles returned per needles dispense (%)")
+ggplot(na.omit(data[!data$site_id==99,]), aes(x=site_id, y=visit_month, fill=no_exchanging_for)) +
+  geom_tile() +
+  ggtitle("Number exchanging for")
+```
+
+#### pp_sep_site_participants
+##### summary of missing data
+```{r pp_sep_site_participants missing, results='asis'}
+data <- pp_sep_site_participants
+data$site_id <- factor(data$site_id)
+for (i in colnames(data)) {
+  cat("-", i, ": ", length(which(is.na(data[,i]))), "\n")
+}
+```
+##### data timeframe, month & year
+```{r pp_sep_site_participants visit_month}
+kable(sort(unique(data$visit_month)), col.names="month and year")
+```
+##### Clean data:
+* remove the data from 2018
+* change the year "2029" to "2019"
+```{r pp_sep_site_participants clean data}
+ind = which(data$visit_month == "2018-07-01")
+data = data[-ind,]
+data$visit_month[data$visit_month == "2029-05-01"] <- "2019-05-01"
+```
+
+```{r pp_sep_site_participants numeric summaries, results='asis'}
+sub_data = dplyr::select_if(data, is.numeric)
+for (i in colnames(sub_data)) {
+  cat("##### ", i)
+  print(kable(t(summary(sub_data[,i])), digits=0))
+  cat("\n")
+}
+```
+
+```{r pp_sep_site_participants plots}
+ggplot(na.omit(data[!data$site_id==99,]), aes(x=site_id, y=visit_month, fill=count_distinct_participants)) +
+  geom_tile() +
+  ggtitle("count_distinct_participants")
+```
+
+```{r pp_sep_site_participants map}
+leaflet() %>%
+    addProviderTiles(providers$Stamen.Toner) %>%
+    addPolygons(data=zip_dat, fillColor = zip_col, fillOpacity = 1,
+                color="black")
+```

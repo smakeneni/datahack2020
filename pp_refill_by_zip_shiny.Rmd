@@ -1,0 +1,90 @@
+---
+title: "Data summary: pp_refill Naloxone refill_events - summary by zip"
+author: "kjn"
+date: "2/8/2020"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(dev="png", dpi=72)
+library(ggplot2)
+library(knitr)
+library(dplyr)
+library(zipcode)
+library(leaflet)
+library(shiny)
+
+load("./data/philly_base_zip_map.RData")
+zip_dat@data$GEOID10 <- droplevels(zip_dat@data$GEOID10)
+
+theme_replace(axis.title.x = element_text(color = "#000000", face = "bold", size = 15),
+              axis.title.y = element_text(color = "#000000", face = "bold", size = 15, angle=90),
+		          axis.text.x = element_text(color = "#000000", size = 15),
+		          axis.text.y = element_text(color = "#000000", size = 15),
+		          axis.line = element_line(color = "#000000", size = 1),
+		          legend.title = element_blank(),
+		          panel.grid.minor = element_blank(),
+		          panel.grid.major = element_blank(),
+              panel.background = element_blank())
+```
+
+```{r data}
+source("system_setup_vars.R") #set database user/pw
+# dbListTables(con)
+source("home/connect_to_db_rstudio.R")
+pp_refill_zipcode_metrics <- as.data.frame(tbl(con, 'pp_refill_zipcode_metrics'))
+# pp_refill_events <- as.data.frame(tbl(con, 'pp_refill_events'))
+```
+
+## Prevention point data
+#### pp_refill_zipcode_metrics 
+
+##### summary of missing data
+```{r pp_refill_zipcode_metrics missing, results='asis', eval=TRUE}
+data <- pp_refill_zipcode_metrics
+data$participant_zip <- clean.zipcodes(data$participant_zip)
+for (i in colnames(data)) {
+  cat("-", i, ": ", length(which(is.na(data[,i]))), "\n")
+}
+```
+
+```{r}
+selectInput(inputId = "pp_zip_metric",
+            label = " Select metric to view:",
+            choices = colnames(pp_refill_zipcode_metrics)[-1])
+```
+
+```{r map}
+leafletOutput("zip_map")
+```
+
+```{r context="server"}
+data <- pp_refill_zipcode_metrics
+
+output$zip_map <- renderLeaflet({
+  map_var = data[, which(colnames(data)==input$pp_zip_metric)] #*data$n_observations
+  minC = floor(min(map_var*100, na.rm = TRUE))
+  maxC = ceiling(max(map_var*100, na.rm=TRUE))
+  pal <- colorQuantile(
+    palette = "Blues",
+    domain=minC:maxC
+  )
+
+  zip_pal <- function(zip_code) {
+    if (zip_code %in% data$participant_zip) {
+      pal(map_var[which(data$participant_zip == zip_code)]*100)
+    } else {
+      "#ffffff"
+    }
+  }
+
+  zip_col <- lapply(zip_dat@data$GEOID10, function(x) zip_pal(x))
+  leaflet() %>%
+    addProviderTiles(providers$Stamen.Toner) %>%
+    addPolygons(data=zip_dat, fillColor = zip_col, fillOpacity = 1,
+                color="black")
+})
+```
+
